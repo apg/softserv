@@ -24,6 +24,75 @@
     (when-not (.isShutdown es)
       (.shutdown es))))
 
+(defmacro with-shutdown
+  "Ensures shutdown of Shutdownable resource `s` after body is run"
+  [#^Shutdownable s & body]
+  `(do (try
+         ~@body
+         (finally
+          (shutdown ~s)))))
+
+(defprotocol IServiceFn
+  (add-method [this value fn]))
+
+(deftype ServiceFn [method-name
+                    #^clojure.lang.Ref method-map
+                    #^clojure.lang.IFn dispatch-fn
+                    #^clojure.lang.AFn generator-fn
+                    #^clojure.lang.AFn error-fn]
+  IServiceFn
+  (add-method [this dvalue func]
+    (dosync
+     (ref-set method-map (assoc @method-map dvalue func))))
+
+  clojure.lang.IFn
+  (invoke [this s]
+    (let [request (generator-fn s)
+          dispatch-value (dispatch-fn request)
+          method (@method-map dispatch-value)]
+      (if method
+        (method s request)
+        (if-not error-fn
+          (#(shutdown %1) s request)
+          (error-fn s request))))))
+
+(defmacro defservice
+  "Creates a new socket service.
+
+  Arguments:
+    dispatch-fn: a function (or keyword) which when given a request object
+                 (a map) returns a value associated with a handler
+    generator-fn: a function which when given a socket returns a request object
+                  (a map).
+    error-fn: (optional) if there's no handler for the request, this function
+              will be called. The default is shutsdown the Socket.
+  "
+  {:arglists '([name docstring? dispatch-fn generator-fn error-fn])}
+  [s-name & args]
+  (let [docstring (if (string? (first args))
+                    (first args)
+                    nil)
+        [dispatch-fn generator-fn error-fn] (if docstring
+                                              (next args)
+                                              args)
+        m (if-let [m s-name]
+            (when docstring
+              (assoc m :doc docstring))
+            (if docstring
+              {:doc docstring}
+              {}))]
+    `(let [v# (def ~s-name)]
+       (when-not (and (.hasRoot v#) (instance? ServiceFn (deref v#)))
+         (def ~(with-meta s-name m)
+           (ServiceFn. ~(name s-name)
+                       (ref {})
+                       ~dispatch-fn
+                       ~generator-fn
+                       ~error-fn))))))
+
+(defmacro defhandler [s-name dispatch-val & fn-tail]
+  `(add-method ~s-name ~dispatch-val (fn ~@fn-tail)))
+
 (defrecord SoftServer [socket pool thread]
   Shutdownable
   (shutdown [s]
@@ -32,30 +101,13 @@
       (shutdown (:pool s))
       (.interrupt (:thread s)))))
 
-(defn- dispatch
-  [genfun hmap s pool]
-  (.submit pool
-           (fn []
-             (let [req (genfun s
-                               (.getInputStream s)
-                               (.getOutputStream s))
-                   operation (:operation req)
-                   handler (get hmap operation (fn [] (shutdown s)))]
-               (handler req
-                        s
-                        (.getInputStream s)
-                        (.getOutputStream s))))))
-
 (defn- create-server-aux
-  [genfun handler-map size ss]
+  [service-fn size ss]
   (let [pool (Executors/newFixedThreadPool size)
         thread (Thread.
                 #(try
                    (let [s (.accept ss)]
-                     (dispatch genfun
-                               handler-map
-                               s
-                               pool)
+                     (service-fn s)
                      (recur))
                    (catch SocketException e)))]
     (.start thread)
@@ -63,43 +115,41 @@
 
 (defn create-server
   "Creates a server"
-  ([port genfun handler-map size backlog #^InetAddress bind-addr]
-     (create-server-aux genfun handler-map size
+  ([port service-fn size backlog #^InetAddress bind-addr]
+     (create-server-aux service-fn size
                         (ServerSocket. port backlog bind-addr)))
-  ([port genfun handler-map size backlog]
-     (create-server-aux genfun handler-map size
+  ([port service-fn size backlog]
+     (create-server-aux service-fn size
                         (ServerSocket. port backlog)))
-  ([port genfun handler-map size]
-     (create-server-aux genfun handler-map size
+  ([port service-fn size]
+     (create-server-aux service-fn size
                         (ServerSocket. port))))
 
-
 (comment
-;; an echo / date server
-(defn req-reader
-  [s in out]
-  (pr (.getRemoteSocketAddress s))
-  (binding [*in* (BufferedReader. (InputStreamReader. in))]
-    (let [line (read-line)]
-      (if (= line "date")
-        {:operation :date
-         :data line}
-        {:operation :echo
-         :data line}))))
+  ;; an echo / date server
+  (defn echo-date-parser [s]
+    (binding [*in* (BufferedReader.
+                     (InputStreamReader.
+                      (.getInputStream s)))]
+      (let [l (read-line)]
+        (assoc {:data l} :type (if (= l "date") :date :echo)))))
+    
+  (defservice echo-date :type echo-date-parser)
 
-(defn echo-handler
-  [req s in out]
-  (binding [*out* (BufferedWriter. (OutputStreamWriter. out))]
-    (prn (:data req))
-    (shutdown s)))
+  (defhandler echo-date :echo
+    [s req]
+    (binding [*out* (BufferedWriter.
+                     (OutputStreamWriter.
+                      (.getOutputStream s)))]
+      (with-shutdown s
+        (println (:data req)))))
 
-(defn date-handler
-  [req s in out]
-  (binding [*out* (BufferedWriter. (OutputStreamWriter. out))]
-    (prn (str (new java.util.Date)))
-    (shutdown s)))
+  (defhandler echo-date :date
+    [s req]
+    (binding [*out* (BufferedWriter.
+                     (OutputStreamWriter.
+                      (.getOutputStream s)))]
+      (with-shutdown s
+        (println (str (java.util.Date.))))))
 
-(def handler-map {:echo echo-handler
-                  :date date-handler})
-
-(create-server 20000 req-reader handler-map 10))
+  (create-server 20000 echo-date 10))
