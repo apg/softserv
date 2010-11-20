@@ -7,7 +7,7 @@ A simple replacement for contrib.socket-server
 To use, write a function that takes a socket and produces some sort of 
 request object.
 
-   (defn echo-date-parser [s]
+    (defn echo-date-parser [s]
        (binding [*in* (BufferedReader.
                         (InputStreamReader.
                           (.getInputStream s)))]
@@ -24,21 +24,21 @@ Once the service is defined, you can now create handlers that take that
 request and continue processing it. The two handlers below handle `:echo`
 requests, and `:date` requests
 
-   (defhandler echo-date :echo
-     [s req]
-     (binding [*out* (BufferedWriter.
+    (defhandler echo-date :echo
+       [s req]
+       (binding [*out* (BufferedWriter.
                        (OutputStreamWriter.
                          (.getOutputStream s)))]
-       (with-shutdown s
-          (println (:data req)))))
+         (with-shutdown s
+            (println (:data req)))))
 
-   (defhandler echo-date :date
-     [s req]
-     (binding [*out* (BufferedWriter.
+    (defhandler echo-date :date
+       [s req]
+       (binding [*out* (BufferedWriter.
                        (OutputStreamWriter.
                          (.getOutputStream s)))]
-       (with-shutdown s
-          (println (str (java.util.Date.))))))
+         (with-shutdown s
+            (println (str (java.util.Date.))))))
 
 Finally, setup a server on port 20000 which handles requests using the
 `echo-date` service and runs in a thread pool of 10 threads.
