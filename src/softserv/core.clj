@@ -124,32 +124,3 @@
   ([port service-fn size]
      (create-server-aux service-fn size
                         (ServerSocket. port))))
-
-(comment
-  ;; an echo / date server
-  (defn echo-date-parser [s]
-    (binding [*in* (BufferedReader.
-                     (InputStreamReader.
-                      (.getInputStream s)))]
-      (let [l (read-line)]
-        (assoc {:data l} :type (if (= l "date") :date :echo)))))
-    
-  (defservice echo-date :type echo-date-parser)
-
-  (defhandler echo-date :echo
-    [s req]
-    (binding [*out* (BufferedWriter.
-                     (OutputStreamWriter.
-                      (.getOutputStream s)))]
-      (with-shutdown s
-        (println (:data req)))))
-
-  (defhandler echo-date :date
-    [s req]
-    (binding [*out* (BufferedWriter.
-                     (OutputStreamWriter.
-                      (.getOutputStream s)))]
-      (with-shutdown s
-        (println (str (java.util.Date.))))))
-
-  (create-server 20000 echo-date 10))
