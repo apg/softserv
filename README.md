@@ -8,9 +8,7 @@ To use, write a function that takes a socket and produces some sort of
 request object.
 
     (defn echo-date-parser [s]
-       (binding [*in* (BufferedReader.
-                        (InputStreamReader.
-                          (.getInputStream s)))]
+       (with-in-reader s
          (let [l (read-line)]
            (assoc {:data l} :type (if (= l "date") :date :echo)))))
     
@@ -26,17 +24,13 @@ requests, and `:date` requests
 
     (defhandler echo-date :echo
        [s req]
-       (binding [*out* (BufferedWriter.
-                       (OutputStreamWriter.
-                         (.getOutputStream s)))]
+       (with-out-writer s
          (with-shutdown s
             (println (:data req)))))
 
     (defhandler echo-date :date
        [s req]
-       (binding [*out* (BufferedWriter.
-                       (OutputStreamWriter.
-                         (.getOutputStream s)))]
+       (with-out-writer s
          (with-shutdown s
             (println (str (java.util.Date.))))))
 
