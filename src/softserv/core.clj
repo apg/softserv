@@ -105,11 +105,12 @@
   [service-fn size ss]
   (let [pool (Executors/newFixedThreadPool size)
         thread (Thread.
-                #(try
-                   (let [s (.accept ss)]
-                     (service-fn s)
-                     (recur))
-                   (catch SocketException e)))]
+                (fn []
+                  (try
+                    (let [s (.accept ss)]
+                      (.execute pool #(service-fn s))
+                      (recur))
+                   (catch SocketException e))))]
     (.start thread)
     (SoftServer. ss pool thread)))
 
@@ -146,6 +147,7 @@
 
   (defhandler echo-date :date
     [s req]
+    (Thread/sleep 10000)
     (binding [*out* (BufferedWriter.
                      (OutputStreamWriter.
                       (.getOutputStream s)))]
@@ -153,3 +155,43 @@
         (println (str (java.util.Date.))))))
 
   (create-server 20000 echo-date 10))
+
+
+(comment
+  (use '[clojure.string :only (split)])
+  (defn http-quick [s]
+    (binding [*in* (BufferedReader.
+                    (InputStreamReader.
+                     (.getInputStream s)))]
+      (let [l (read-line)]
+        (let [[method path proto] (split l #"\s")]
+          {:method method :path path :proto proto}))))
+
+  (defservice http-server :path http-quick
+    (fn [s req]
+      (binding [*out* (BufferedWriter.
+                       (OutputStreamWriter.
+                        (.getOutputStream s)))]
+        (with-shutdown s
+          (print"500 ERROR\r\n\r\nAn error occurred")))))
+
+  (defhandler http-server "/about"
+    [s req]
+    (binding [*out* (BufferedWriter.
+                     (OutputStreamWriter.
+                      (.getOutputStream s)))]
+      (with-shutdown s
+        (Thread/sleep 30000)
+        (print "200 OK\r\n\r\nIndex"))))
+
+  (defhandler http-server "/"
+    [s req]
+    (binding [*out* (BufferedWriter.
+                     (OutputStreamWriter.
+                      (.getOutputStream s)))]
+      (with-shutdown s
+        (print "200 OK\r\n\r\nIndex"))))
+
+  (create-server 20000 http-server 1))
+
+
