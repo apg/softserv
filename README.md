@@ -1,6 +1,6 @@
 # softserv
 
-A simple replacement for contrib.socket-server
+A simple replacement for contrib.server-socket
 
 ## Usage
 
