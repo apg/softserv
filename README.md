@@ -2,6 +2,12 @@
 
 A simple replacement for contrib.server-socket
 
+Interesting things it does:
+
+1. allows you to limit the number of threads that are started
+2. creates a multimethod like dispatching approach for servers
+3. you get access to the actual socket object instead of input/output streams
+
 ## Usage
 
 To use, write a function that takes a socket and produces some sort of 
