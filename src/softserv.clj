@@ -1,8 +1,9 @@
-(ns softserv.core
+(ns softserv
   (:import [java.util.concurrent ExecutorService Executors]
            [java.io BufferedReader BufferedWriter
             InputStreamReader OutputStreamWriter]
-           [java.net Socket ServerSocket SocketException InetAddress]))
+           [java.net Socket ServerSocket DatagramSocket
+            SocketException InetAddress]))
 
 (defprotocol Shutdownable
   (shutdown [s]))
@@ -93,7 +94,7 @@
 (defmacro defhandler [s-name dispatch-val & fn-tail]
   `(add-method ~s-name ~dispatch-val (fn ~@fn-tail)))
 
-(defrecord SoftServer [socket pool thread]
+(defrecord SoftServer [socket pool thread type]
   Shutdownable
   (shutdown [s]
     (do
@@ -101,96 +102,37 @@
       (shutdown (:pool s))
       (.interrupt (:thread s)))))
 
+
 (defn- create-server-aux
-  [service-fn size ss]
+  [service-fn size ss connector-fn]
   (let [pool (Executors/newFixedThreadPool size)
         thread (Thread.
                 (fn []
                   (try
-                    (let [s (.accept ss)]
+                    (let [s (connector-fn ss)]
                       (.execute pool #(service-fn s))
                       (recur))
-                   (catch SocketException e))))]
+                    (catch Exception e
+                      (recur)))))]
     (.start thread)
     (SoftServer. ss pool thread)))
 
 (defn create-server
   "Creates a server"
-  ([port service-fn size backlog #^InetAddress bind-addr]
-     (create-server-aux service-fn size
-                        (ServerSocket. port backlog bind-addr)))
-  ([port service-fn size backlog]
-     (create-server-aux service-fn size
-                        (ServerSocket. port backlog)))
-  ([port service-fn size]
-     (create-server-aux service-fn size
-                        (ServerSocket. port))))
+  [& {:keys [port service backlog bind size]}]
+  (create-server-aux service
+                     (or size 8)
+                     (ServerSocket. port
+                                    (or backlog 5)
+                                    (or bind (InetAddress/getLocalHost)))
+                     #(.accept %)))
 
-(comment
-  ;; an echo / date server
-  (defn echo-date-parser [s]
-    (binding [*in* (BufferedReader.
-                     (InputStreamReader.
-                      (.getInputStream s)))]
-      (let [l (read-line)]
-        (assoc {:data l} :type (if (= l "date") :date :echo)))))
-    
-  (defservice echo-date :type echo-date-parser)
-
-  (defhandler echo-date :echo
-    [s req]
-    (binding [*out* (BufferedWriter.
-                     (OutputStreamWriter.
-                      (.getOutputStream s)))]
-      (with-shutdown s
-        (println (:data req)))))
-
-  (defhandler echo-date :date
-    [s req]
-    (Thread/sleep 10000)
-    (binding [*out* (BufferedWriter.
-                     (OutputStreamWriter.
-                      (.getOutputStream s)))]
-      (with-shutdown s
-        (println (str (java.util.Date.))))))
-
-  (create-server 20000 echo-date 10))
-
-
-(comment
-  (use '[clojure.string :only (split)])
-  (defn http-quick [s]
-    (binding [*in* (BufferedReader.
-                    (InputStreamReader.
-                     (.getInputStream s)))]
-      (let [l (read-line)]
-        (let [[method path proto] (split l #"\s")]
-          {:method method :path path :proto proto}))))
-
-  (defservice http-server :path http-quick
-    (fn [s req]
-      (binding [*out* (BufferedWriter.
-                       (OutputStreamWriter.
-                        (.getOutputStream s)))]
-        (with-shutdown s
-          (print"500 ERROR\r\n\r\nAn error occurred")))))
-
-  (defhandler http-server "/about"
-    [s req]
-    (binding [*out* (BufferedWriter.
-                     (OutputStreamWriter.
-                      (.getOutputStream s)))]
-      (with-shutdown s
-        (Thread/sleep 30000)
-        (print "200 OK\r\n\r\nIndex"))))
-
-  (defhandler http-server "/"
-    [s req]
-    (binding [*out* (BufferedWriter.
-                     (OutputStreamWriter.
-                      (.getOutputStream s)))]
-      (with-shutdown s
-        (print "200 OK\r\n\r\nIndex"))))
-
-  (create-server 20000 http-server 1))
-
+(defn create-udp-server
+  "Creates a Datagram server"
+  [& {:keys [port service bind size]}]
+  (create-server-aux service
+                     (or size 8)
+                     (DatagramSocket. port
+                                      (or bind (InetAddress/getLocalHost)))
+                     #(let [p (DatagramPacket.)]
+                        (.receive % p))))
