@@ -10,6 +10,8 @@ Interesting things it does:
 
 ## Usage
 
+[Note: This has recently been going through some revamping, so if it's broke, it'll be fixed eventually.]
+
 To use, write a function that takes a socket and produces some sort of 
 request object.
 
