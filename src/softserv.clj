@@ -1,9 +1,10 @@
 (ns softserv
+  (:use [clojure.contrib.logging :as log])
   (:import [java.util.concurrent ExecutorService Executors]
            [java.io BufferedReader BufferedWriter
             InputStreamReader OutputStreamWriter]
            [java.net Socket ServerSocket DatagramSocket
-            SocketException InetAddress]))
+             DatagramPacket SocketException InetAddress]))
 
 (defprotocol Shutdownable
   (shutdown [s]))
@@ -20,6 +21,10 @@
   (shutdown [ss]
     (when-not (.isClosed ss)
       (.close ss)))
+  DatagramSocket
+  (shutdown [ds]
+    (when-not (.isClosed ds)
+      (.close ds)))
   ExecutorService
   (shutdown [es]
     (when-not (.isShutdown es)
@@ -94,7 +99,7 @@
 (defmacro defhandler [s-name dispatch-val & fn-tail]
   `(add-method ~s-name ~dispatch-val (fn ~@fn-tail)))
 
-(defrecord SoftServer [socket pool thread type]
+(defrecord SoftServer [socket pool thread]
   Shutdownable
   (shutdown [s]
     (do
@@ -108,12 +113,13 @@
   (let [pool (Executors/newFixedThreadPool size)
         thread (Thread.
                 (fn []
-                  (try
-                    (let [s (connector-fn ss)]
-                      (.execute pool #(service-fn s))
-                      (recur))
-                    (catch Exception e
-                      (recur)))))]
+                  (loop []
+                   (try
+                     (let [s (connector-fn ss)]
+                       (.execute pool #(service-fn s))
+                       (recur))
+                     (catch SocketException e
+                       (log/error e))))))]
     (.start thread)
     (SoftServer. ss pool thread)))
 
@@ -133,6 +139,7 @@
   (create-server-aux service
                      (or size 8)
                      (DatagramSocket. port
-                                      (or bind (InetAddress/getLocalHost)))
-                     #(let [p (DatagramPacket.)]
-                        (.receive % p))))
+                                      (or bind (InetAddress/getByName "0.0.0.0")))
+                     #(let [p (DatagramPacket. (byte-array 1024) 1024)]
+                        (.receive % p)
+                        p)))
